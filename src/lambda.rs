@@ -6,16 +6,17 @@ use reqwest::r#async::Client;
 use rusoto_s3::{GetObjectRequest, S3Client, S3};
 use serde_json::{json, Value};
 use tokio::runtime::Runtime;
+use std::env::var;
 
 fn main() {
     lambda!(my_handler);
 }
 
 fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
-    let s3_bucket = "discourse-staging-emailin";
-    let discourse_base_url = "https://discourse-staging.production.paas.mozilla.community";
-    let discourse_api_key = "";
-    let discourse_api_username = "system";
+    let s3_bucket = var("DISCOURSE_EMAIL_IN_BUCKET")?;
+    let discourse_base_url = var("DISCOURSE_URL")?;
+    let discourse_api_key = var("DISCOURSE_API_KEY")?;
+    let discourse_api_username = var("DISCOURSE_API_USERNAME")?;
 
     let key = match &event["Records"][0]["ses"]["mail"]["messageId"] {
         Value::String(id) => id,

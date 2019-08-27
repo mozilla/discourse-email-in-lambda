@@ -5,8 +5,8 @@ use lambda_runtime::{error::HandlerError, lambda, Context};
 use reqwest::r#async::Client;
 use rusoto_s3::{GetObjectRequest, S3Client, S3};
 use serde_json::{json, Value};
-use tokio::runtime::Runtime;
 use std::env::var;
+use tokio::runtime::Runtime;
 
 fn main() {
     lambda!(my_handler);

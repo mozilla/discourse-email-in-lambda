@@ -2,9 +2,11 @@
 
 ## Building
 
+`rustup target install x86_64-unknown-linux-musl`
+
 `cargo build --release --features vendored --target x86_64-unknown-linux-musl`
 
-`zip -j rust.zip ./target/x86_64-unknown-linux-musl/release/bootstrap`
+`zip -j lambda.zip ./target/x86_64-unknown-linux-musl/release/bootstrap`
 
 ## Setting up
 

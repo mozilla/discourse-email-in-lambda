@@ -22,6 +22,7 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
         Value::String(id) => id,
         _ => return Err(HandlerError::from("messageId isn't a string")),
     };
+    println!("processing email with id {}", key);
 
     let request = GetObjectRequest {
         bucket: s3_bucket.to_string(),
@@ -52,12 +53,13 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
                     .query(&[("api_username", discourse_api_username)])
                     .json(&json!({ "email": raw }))
                     .send()
-                    .map_err(|e| {
-                        println!("hi {}", e);
-                        Error::from(e)
-                    })
+                    .map_err(Error::from)
             })
             .map(|_| ())
-            .map_err(|e| HandlerError::from(e)),
+            .map_err(|e| {
+                let h = HandlerError::from(e);
+                println!("{}", h);
+                h
+            }),
     )
 }

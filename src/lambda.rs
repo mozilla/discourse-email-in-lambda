@@ -1,6 +1,6 @@
 use failure::{format_err, Error};
-use futures::Future;
-use futures::Stream;
+use futures::future::{ok, Either};
+use futures::{Future, Stream};
 use lambda_runtime::{error::HandlerError, lambda, Context};
 use reqwest::r#async::Client;
 use rusoto_s3::{GetObjectRequest, S3Client, S3};
@@ -54,6 +54,21 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
                     .json(&json!({ "email": raw }))
                     .send()
                     .map_err(Error::from)
+                    .and_then(|mut res| {
+                        let status = res.status();
+                        if status.is_success() {
+                            Either::A(ok(res))
+                        } else {
+                            Either::B(
+                                res.text()
+                                    .map_err(Error::from)
+                                    .and_then(move |text| {
+                                        Err(format_err!("status: {}, body: {}", status, text))
+                                    })
+                                    .map_err(Error::from),
+                            )
+                        }
+                    })
             })
             .map(|_| ())
             .map_err(|e| {

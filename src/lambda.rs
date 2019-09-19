@@ -1,7 +1,9 @@
+use env_logger::Env;
 use failure::{format_err, Error};
 use futures::future::{ok, Either};
 use futures::{Future, Stream};
 use lambda_runtime::{error::HandlerError, lambda, Context};
+use log::info;
 use reqwest::r#async::Client;
 use rusoto_s3::{GetObjectRequest, S3Client, S3};
 use serde_json::{json, Value};
@@ -9,6 +11,12 @@ use std::env::var;
 use tokio::runtime::Runtime;
 
 fn main() {
+    env_logger::from_env(
+        Env::default()
+            .default_filter_or("info")
+            .default_write_style_or("never"),
+    )
+    .init();
     lambda!(my_handler);
 }
 
@@ -17,12 +25,27 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
     let discourse_base_url = var("DISCOURSE_URL")?;
     let discourse_api_key = var("DISCOURSE_API_KEY")?;
     let discourse_api_username = var("DISCOURSE_API_USERNAME")?;
+    let rejected_recipients = var("REJECTED_RECIPIENTS")?;
 
     let key = match &event["Records"][0]["ses"]["mail"]["messageId"] {
         Value::String(id) => id,
         _ => return Err(HandlerError::from("messageId isn't a string")),
     };
-    println!("processing email with id {}", key);
+    info!("processing email with id {}", key);
+
+    let recipients = match event["Records"][0]["ses"]["receipt"]["recipients"].as_array() {
+        Some(x) => x,
+        None => return Err(HandlerError::from("recipients isn't an array")),
+    };
+
+    for rejected in rejected_recipients.split(',') {
+        for recipient in recipients {
+            if recipient == rejected {
+                info!("recipient {} is in rejected list", recipient);
+                return Ok(());
+            }
+        }
+    }
 
     let request = GetObjectRequest {
         bucket: s3_bucket.to_string(),
@@ -71,10 +94,6 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
                     })
             })
             .map(|_| ())
-            .map_err(|e| {
-                let h = HandlerError::from(e);
-                println!("{}", h);
-                h
-            }),
+            .map_err(HandlerError::from),
     )
 }

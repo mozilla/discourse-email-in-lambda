@@ -1,6 +1,6 @@
 [package]
 name = "discourse-email-in-lambda"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Leo McArdle <leo@mozilla.com>"]
 edition = "2018"
 autobins = false
@@ -24,6 +24,8 @@ rusoto_core = "^0.40.0"
 rusoto_s3 = "^0.40.0"
 futures = "^0.1.28"
 "tokio" = "0.1"
+log = "*"
+env_logger = "^0.6.2"
 
 [[bin]]
 name = "bootstrap"

@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "discourse-email-in-lambda"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -294,6 +294,7 @@ dependencies = [
  "lambda_runtime 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.10.24 (registry+https://github.com/rust-lang/crates.io-index)",
+ "regex 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "reqwest 0.9.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusoto_core 0.40.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusoto_s3 0.40.0 (registry+https://github.com/rust-lang/crates.io-index)",

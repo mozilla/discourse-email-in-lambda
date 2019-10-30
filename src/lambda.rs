@@ -4,6 +4,7 @@ use futures::future::{ok, Either};
 use futures::{Future, Stream};
 use lambda_runtime::{error::HandlerError, lambda, Context};
 use log::info;
+use regex::Regex;
 use reqwest::r#async::Client;
 use rusoto_s3::{GetObjectRequest, S3Client, S3};
 use serde_json::{json, Value};
@@ -32,6 +33,34 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
         _ => return Err(HandlerError::from("messageId isn't a string")),
     };
     info!("processing email with id {}", key);
+
+    let dmarc_verdict = match &event["Records"][0]["ses"]["receipt"]["dmarcVerdict"]["status"] {
+        Value::String(x) => x,
+        _ => return Err(HandlerError::from("dmarcVerdict isn't a string")),
+    };
+    if dmarc_verdict == "FAIL" {
+        info!("DMARC failed");
+        info!("{}", &event);
+        return Ok(());
+    }
+
+    let from_mozilla =
+        Regex::new(r"@(mozilla\.com|getpocket\.com|mozillafoundation\.org|mozilla\.org)").unwrap();
+    let from = match event["Records"][0]["ses"]["mail"]["commonHeaders"]["from"].as_array() {
+        Some(x) => x,
+        None => return Err(HandlerError::from("from isn't an array")),
+    };
+    for sender_value in from {
+        let sender = match sender_value.as_str() {
+            Some(x) => x,
+            None => return Err(HandlerError::from("sender isn't a string")),
+        };
+        if from_mozilla.is_match(sender) && dmarc_verdict != "PASS" {
+            info!("DMARC didn't pass for Mozilla domain");
+            info!("{}", &event);
+            return Ok(());
+        }
+    }
 
     let recipients = match event["Records"][0]["ses"]["receipt"]["recipients"].as_array() {
         Some(x) => x,

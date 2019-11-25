@@ -101,8 +101,8 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
                 let url = discourse_base_url.to_owned() + "/admin/email/handle_mail";
                 client
                     .post(&url)
-                    .query(&[("api_key", discourse_api_key)])
-                    .query(&[("api_username", discourse_api_username)])
+                    .header("Api-Key", discourse_api_key)
+                    .header("Api-Username", discourse_api_username)
                     .json(&json!({ "email": raw }))
                     .send()
                     .map_err(Error::from)

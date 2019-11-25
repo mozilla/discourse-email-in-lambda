@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "discourse-email-in-lambda"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",

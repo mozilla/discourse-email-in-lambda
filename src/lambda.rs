@@ -46,6 +46,18 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
 
     let from_mozilla =
         Regex::new(r"@(mozilla\.com|getpocket\.com|mozillafoundation\.org|mozilla\.org)").unwrap();
+
+    let reject_subject = Regex::new(r"(It's a match!|Someone matched with you on Tinder!)").unwrap();
+    // https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html
+    let subject = match event["Records"][0]["ses"]["mail"]["commonHeaders"]["subject"].as_str() {
+        Some(x) => x,
+        None => return Err(HandlerError::from("subject was not a string")),
+    };
+    if reject_subject.is_match(subject) {
+        info!("Subject matches reject list {}", &subject);
+        return Ok(());
+    }
+
     let from = match event["Records"][0]["ses"]["mail"]["commonHeaders"]["from"].as_array() {
         Some(x) => x,
         None => return Err(HandlerError::from("from isn't an array")),

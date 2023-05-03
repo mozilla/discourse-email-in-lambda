@@ -1,86 +1,95 @@
+use aws_lambda_events::event::ses::SimpleEmailEvent;
+use aws_sdk_s3 as s3;
 use env_logger::Env;
-use failure::{format_err, Error};
-use futures::future::{ok, Either};
-use futures::{Future, Stream};
-use lambda_runtime::{error::HandlerError, lambda, Context};
+use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use log::info;
 use regex::Regex;
-use reqwest::r#async::Client;
-use rusoto_s3::{GetObjectRequest, S3Client, S3};
-use serde_json::{json, Value};
+use reqwest::Client;
+use serde_json::json;
 use std::env::var;
-use tokio::runtime::Runtime;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     env_logger::from_env(
         Env::default()
             .default_filter_or("info")
             .default_write_style_or("never"),
     )
     .init();
-    lambda!(my_handler);
+
+    run(service_fn(my_handler)).await
 }
 
-fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
+async fn my_handler(mut event: LambdaEvent<SimpleEmailEvent>) -> Result<(), Error> {
     let s3_bucket = var("DISCOURSE_EMAIL_IN_BUCKET")?;
     let discourse_base_url = var("DISCOURSE_URL")?;
     let discourse_api_key = var("DISCOURSE_API_KEY")?;
     let discourse_api_username = var("DISCOURSE_API_USERNAME")?;
     let rejected_recipients = var("REJECTED_RECIPIENTS")?;
 
-    let key = match &event["Records"][0]["ses"]["mail"]["messageId"] {
-        Value::String(id) => id,
-        _ => return Err(HandlerError::from("messageId isn't a string")),
-    };
+    let ses = event
+        .payload
+        .records
+        .pop()
+        .ok_or::<Error>(Error::from("Missing records").into())?
+        .ses;
+
+    let key = ses
+        .mail
+        .message_id
+        .ok_or(Error::from("messageId isn't a string"))?;
+
     info!("processing email with id {}", key);
 
-    let dmarc_verdict = match &event["Records"][0]["ses"]["receipt"]["dmarcVerdict"]["status"] {
-        Value::String(x) => x,
-        _ => return Err(HandlerError::from("dmarcVerdict isn't a string")),
-    };
+    let dmarc_verdict = ses
+        .receipt
+        .dmarc_verdict
+        .status
+        .ok_or::<Error>(Error::from("dmarcVerdict isn't a string").into())?;
+
     if dmarc_verdict == "FAIL" {
         info!("DMARC failed");
-        info!("{}", &event);
+        info!("{:?}", &event);
+        return Ok(());
+    }
+
+    let spam_verdict = ses
+        .receipt
+        .spam_verdict
+        .status
+        .ok_or::<Error>(Error::from("Spam verdict isn't a string").into())?;
+
+    if spam_verdict == "FAIL" {
+        info!("SPAM failed");
+        info!("{:?}", &event);
+        return Ok(());
+    }
+
+    let virus_verdict = ses
+        .receipt
+        .virus_verdict
+        .status
+        .ok_or::<Error>(Error::from("Virus verdict isn't a string").into())?;
+
+    if virus_verdict == "FAIL" {
+        info!("VIRUS failed");
+        info!("{:?}", &event);
         return Ok(());
     }
 
     let from_mozilla =
         Regex::new(r"@(mozilla\.com|getpocket\.com|mozillafoundation\.org|mozilla\.org)").unwrap();
 
-    let reject_subject = Regex::new(r"(It's a match!|Someone matched with you on Tinder!)").unwrap();
-    // https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html
-    let subject = match event["Records"][0]["ses"]["mail"]["commonHeaders"]["subject"].as_str() {
-        Some(x) => x,
-        None => return Err(HandlerError::from("subject was not a string")),
-    };
-    if reject_subject.is_match(subject) {
-        info!("Subject matches reject list {}", &subject);
-        return Ok(());
-    }
-
-    let from = match event["Records"][0]["ses"]["mail"]["commonHeaders"]["from"].as_array() {
-        Some(x) => x,
-        None => return Err(HandlerError::from("from isn't an array")),
-    };
-    for sender_value in from {
-        let sender = match sender_value.as_str() {
-            Some(x) => x,
-            None => return Err(HandlerError::from("sender isn't a string")),
-        };
-        if from_mozilla.is_match(sender) && dmarc_verdict != "PASS" {
+    for sender in ses.mail.common_headers.from {
+        if from_mozilla.is_match(&sender) && dmarc_verdict != "PASS" {
             info!("DMARC didn't pass for Mozilla domain");
-            info!("{}", &event);
+            info!("{:?}", &event);
             return Ok(());
         }
     }
 
-    let recipients = match event["Records"][0]["ses"]["receipt"]["recipients"].as_array() {
-        Some(x) => x,
-        None => return Err(HandlerError::from("recipients isn't an array")),
-    };
-
     for rejected in rejected_recipients.split(',') {
-        for recipient in recipients {
+        for recipient in &ses.receipt.recipients {
             if recipient == rejected {
                 info!("recipient {} is in rejected list", recipient);
                 return Ok(());
@@ -88,53 +97,32 @@ fn my_handler(event: Value, ctx: Context) -> Result<(), HandlerError> {
         }
     }
 
-    let request = GetObjectRequest {
-        bucket: s3_bucket.to_string(),
-        key: key.to_string(),
-        ..Default::default()
-    };
+    let config = aws_config::load_from_env().await;
+    let client = s3::Client::new(&config);
+    let response = client
+        .get_object()
+        .bucket(s3_bucket)
+        .key(key)
+        .send()
+        .await?;
 
-    let mut rt = Runtime::new().unwrap();
+    let body = response.body.collect().await?.to_vec();
 
-    let s3_client = S3Client::new(rusoto_core::Region::default());
-    rt.block_on(
-        s3_client
-            .get_object(request)
-            .map_err(Error::from)
-            .and_then(|res| {
-                res.body
-                    .ok_or_else(|| format_err!("No body received from S3"))
-            })
-            .and_then(|body| body.concat2().map_err(Error::from))
-            .map(|body| body.to_vec())
-            .and_then(|body| String::from_utf8(body).map_err(Error::from))
-            .and_then(move |raw| {
-                let client = Client::new();
-                let url = discourse_base_url.to_owned() + "/admin/email/handle_mail";
-                client
-                    .post(&url)
-                    .header("Api-Key", discourse_api_key)
-                    .header("Api-Username", discourse_api_username)
-                    .json(&json!({ "email": raw }))
-                    .send()
-                    .map_err(Error::from)
-                    .and_then(|mut res| {
-                        let status = res.status();
-                        if status.is_success() {
-                            Either::A(ok(res))
-                        } else {
-                            Either::B(
-                                res.text()
-                                    .map_err(Error::from)
-                                    .and_then(move |text| {
-                                        Err(format_err!("status: {}, body: {}", status, text))
-                                    })
-                                    .map_err(Error::from),
-                            )
-                        }
-                    })
-            })
-            .map(|_| ())
-            .map_err(HandlerError::from),
-    )
+    let client = Client::new();
+    let url = discourse_base_url.to_owned() + "/admin/email/handle_mail";
+    let res = client
+        .post(&url)
+        .header("Api-Key", discourse_api_key)
+        .header("Api-Username", discourse_api_username)
+        .json(&json!({ "email": body }))
+        .send()
+        .await?;
+
+    let status = res.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        let text = res.text().await?;
+        Err(anyhow::Error::msg(format!("status: {}, body: {}", status, text)).into())
+    }
 }
